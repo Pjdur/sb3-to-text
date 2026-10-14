@@ -1,5 +1,6 @@
 import json
 import zipfile
+import sys
 
 # Dictionary mapping internal Scratch opcodes to clean pseudocode formats
 OPCODE_MAP = {
@@ -8,41 +9,36 @@ OPCODE_MAP = {
     "event_whenkeypressed": "when key [{0}] pressed",
     "event_whenthisspriteclicked": "when this sprite clicked",
     "control_start_as_clone": "when I start as a clone",
-    
     # Motion
     "motion_movesteps": "move ({0}) steps",
     "motion_gotoxy": "go to x: ({0}) y: ({1})",
     "motion_changeyby": "change y by ({0})",
     "motion_pointindirection": "point in direction ({0})",
-    
     # Looks
     "looks_hide": "hide",
     "looks_show": "show",
     "looks_switchcostumeto": "switch costume to [{0}]",
     "looks_nextcostume": "next costume",
     "looks_goforwardbackwardlayers": "go {0} {1} layers",
-    
     # Variables
     "data_setvariableto": "set [{0}] to ({1})",
     "data_changevariableby": "change [{0}] by ({1})",
-    
     # Control
     "control_repeat": "repeat ({0})",
     "control_forever": "forever",
     "control_if": "if <{0}> then",
     "control_if_else": "if <{0}> then",
     "control_create_clone_of": "create clone of [{0}]",
-    
     # Operators
     "operator_round": "round({0})",
     "operator_multiply": "({0} * {1})",
     "operator_or": "({0} or {1})",
-    
     # Sensing
     "sensing_keypressed": "key [{0}] pressed?",
     "procedures_call": "call custom block",
     "procedures_definition": "define custom block",
 }
+
 
 def clean_value(val):
     """Unwraps redundant menu blocks like sensing_keyoptions(a) -> a."""
@@ -54,6 +50,7 @@ def clean_value(val):
     if val == "procedures_prototype":
         return "My Block"
     return val
+
 
 def parse_block(block_id, blocks):
     if not block_id or block_id not in blocks:
@@ -70,7 +67,7 @@ def parse_block(block_id, blocks):
 
     # Handle dropdown fields directly
     field_args = [str(v[0]) for v in fields.values()]
-    
+
     input_args = []
     sub_stacks = []
 
@@ -113,9 +110,10 @@ def parse_block(block_id, blocks):
 
     return text
 
+
 def sb3_to_text(sb3_file_path):
-    with zipfile.ZipFile(sb3_file_path, 'r') as archive:
-        with archive.open('project.json') as f:
+    with zipfile.ZipFile(sb3_file_path, "r") as archive:
+        with archive.open("project.json") as f:
             data = json.load(f)
 
     out = []
@@ -129,7 +127,11 @@ def sb3_to_text(sb3_file_path):
             out.append(f"Variables: {', '.join(vars_list)}")
 
         blocks = target.get("blocks", {})
-        top_blocks = [b_id for b_id, b in blocks.items() if isinstance(b, dict) and b.get("topLevel", False)]
+        top_blocks = [
+            b_id
+            for b_id, b in blocks.items()
+            if isinstance(b, dict) and b.get("topLevel", False)
+        ]
 
         if not top_blocks:
             out.append("  (No code scripts found)\n")
@@ -143,5 +145,13 @@ def sb3_to_text(sb3_file_path):
         out.append("\n")
 
     return "\n".join(out)
-    
-print(sb3_to_text("Car Thing2.sb3"))
+
+args = sys.argv[1:]
+filename = sys.argv[1]
+
+if "-o" in args:
+    print(sb3_to_text(f"{filename}"))
+else:
+    with open(f"{filename}.txt", "w", encoding='utf-8') as f:
+        f.write(sb3_to_text(f"{filename}"))   
+
