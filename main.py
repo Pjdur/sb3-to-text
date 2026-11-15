@@ -1,6 +1,7 @@
 import json
 import zipfile
 import sys
+import re
 
 # Dictionary mapping internal Scratch opcodes to clean pseudocode formats
 OPCODE_MAP = {
@@ -35,8 +36,6 @@ OPCODE_MAP = {
     "operator_or": "({0} or {1})",
     # Sensing
     "sensing_keypressed": "key [{0}] pressed?",
-    "procedures_call": "call custom block",
-    "procedures_definition": "define custom block",
 }
 
 
@@ -47,13 +46,39 @@ def clean_value(val):
     if val.startswith("control_create_clone_of_menu(") and val.endswith(")"):
         inner = val[29:-1]
         return "myself" if inner == "_myself_" else inner
-    if val == "procedures_prototype":
-        return "My Block"
     return val
 
 
+def format_proccode(proccode, arg_values):
+    """Safely replaces Scratch proccode placeholders (%s, %n, %b) with argument values."""
+    parts = re.split(r"(%[sbn])", proccode)
+    result = []
+    arg_idx = 0
+    for part in parts:
+        if part in ("%s", "%n"):
+            val = arg_values[arg_idx] if arg_idx < len(arg_values) else ""
+            result.append(f"({val})")
+            arg_idx += 1
+        elif part == "%b":
+            val = arg_values[arg_idx] if arg_idx < len(arg_values) else ""
+            result.append(f"<{val}>")
+            arg_idx += 1
+        else:
+            result.append(part)
+    return "".join(result)
+
+
 def parse_block(block_id, blocks):
-    if not block_id or block_id not in blocks:
+    if not block_id:
+        return ""
+    
+    # Safeguard if a list (like a primitive value wrapper) was passed instead of an ID string
+    if isinstance(block_id, list):
+        if len(block_id) > 1:
+            return str(block_id[1])
+        return ""
+
+    if block_id not in blocks:
         return ""
 
     block = blocks[block_id]
@@ -64,6 +89,57 @@ def parse_block(block_id, blocks):
     inputs = block.get("inputs", {})
     fields = block.get("fields", {})
     next_block = block.get("next")
+    mutation = block.get("mutation", {})
+
+    # Handle Procedure Definition (`procedures_definition`)
+    if opcode == "procedures_definition":
+        custom_block_input = inputs.get("custom_block")
+        proccode = "custom block"
+        if custom_block_input and isinstance(custom_block_input, list) and len(custom_block_input) > 1:
+            proto_id = custom_block_input[1]
+            if proto_id in blocks:
+                proto_block = blocks[proto_id]
+                proto_mutation = proto_block.get("mutation", {})
+                proccode = proto_mutation.get("proccode", "custom block")
+        
+        text = f"define {proccode}"
+        if next_block:
+            text += "\n" + parse_block(next_block, blocks)
+        return text
+
+    # Handle Procedure Calls (`procedures_call`)
+    if opcode == "procedures_call":
+        proccode = mutation.get("proccode", "custom block")
+        
+        try:
+            arg_ids = json.loads(mutation.get("argumentids", "[]"))
+        except (TypeError, json.JSONDecodeError):
+            arg_ids = []
+
+        arg_values = []
+        for arg_id in arg_ids:
+            if arg_id in inputs:
+                inp_val = inputs[arg_id]
+                if isinstance(inp_val, list) and len(inp_val) > 1:
+                    target = inp_val[1]
+                    if isinstance(target, str):
+                        resolved = parse_block(target, blocks)
+                        arg_values.append(clean_value(resolved))
+                    elif isinstance(target, list):
+                        arg_values.append(str(target[1]) if len(target) > 1 else "")
+                    else:
+                        arg_values.append("")
+                else:
+                    arg_values.append("")
+            else:
+                arg_values.append("")
+
+        formatted_call = format_proccode(proccode, arg_values)
+        text = f"call {formatted_call}"
+        
+        if next_block:
+            text += "\n" + parse_block(next_block, blocks)
+        return text
 
     # Handle dropdown fields directly
     field_args = [str(v[0]) for v in fields.values()]
@@ -146,12 +222,19 @@ def sb3_to_text(sb3_file_path):
 
     return "\n".join(out)
 
-args = sys.argv[1:]
-filename = sys.argv[1]
 
-if "-o" in args:
-    print(sb3_to_text(f"{filename}"))
-else:
-    with open(f"{filename}.txt", "w", encoding='utf-8') as f:
-        f.write(sb3_to_text(f"{filename}"))   
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python script.py <project.sb3> [-o]")
+        sys.exit(1)
 
+    filename = sys.argv[1]
+    args = sys.argv[2:]
+
+    if "-o" in args:
+        print(sb3_to_text(filename))
+    else:
+        output_name = f"{filename}.txt"
+        with open(output_name, "w", encoding='utf-8') as f:
+            f.write(sb3_to_text(filename))
+        print(f"Output saved to {output_name}")
